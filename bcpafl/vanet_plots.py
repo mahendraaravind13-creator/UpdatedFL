@@ -525,91 +525,94 @@ def _write_explanations(df: pd.DataFrame, rsu_range_m: float, out_dir: Path,
                       pd.Series(dtype=float))
     coverage_total = pd.to_numeric(coverage_total, errors="coerce").dropna()
     if coverage_total.empty:
-        coverage_reason = "No closest in-range RSU service values were recorded."
+        coverage_reason = "No RSU coverage counts were recorded for this run."
     elif coverage_total.min() == coverage_total.max():
-        coverage_reason = (f"Coverage remained constant at {coverage_total.iloc[0]:.0f} "
-                           "vehicles across all rounds.")
+        coverage_reason = (f"Coverage stayed at {coverage_total.iloc[0]:.0f} vehicles "
+                           "in every round, so nobody entered or left RSU range.")
     else:
         coverage_reason = (
-            f"Observed closest in-range RSU service varied from {coverage_total.min():.0f} "
-            f"to {coverage_total.max():.0f} vehicles, recording entries or exits relative "
-            f"to the {rsu_range_m:.0f} m radius. The graph alone does not establish the "
-            "cause of each change.")
+            f"Between {coverage_total.min():.0f} and {coverage_total.max():.0f} vehicles "
+            f"were within {rsu_range_m:.0f} m of their nearest RSU. Each step up or down "
+            "is a vehicle driving into or out of range. The count tells you that "
+            "coverage changed, not why a particular vehicle moved.")
 
     entries = [
         ("vanet_accuracy_vs_rounds.png", _extrema_summary(_pop_priv, "%"),
-         "Private accuracy is each vehicle's private model on its local held-out "
-         "split; every vehicle trains it every round (DML against the latest global "
-         "model), as in ProxyFL v1. The global proxy line is the aggregated model on "
-         "the attack benchmark (attack1-5_test.csv), which is what v1's server "
-         "reports. Accuracy can dip when non-IID data (--alpha) is used, the "
-         "participating set changes with mobility, or DP-SGD adds noise to proxy "
-         "updates. The learning rate decays per round (lr_decay), so the curves "
-         "settle as training progresses."),
+         "Each thin line is one vehicle's private model, scored on that vehicle's "
+         "own held-out data. As in ProxyFL v1, every vehicle trains its private "
+         "model every round by learning alongside the latest global model (DML). "
+         "The global line is the aggregated model scored on the attack benchmark "
+         "(attack1-5_test.csv), which is what v1's server reports. Expect small "
+         "dips when data is split unevenly (--alpha), when mobility changes who "
+         "takes part, or when DP-SGD adds noise. The learning rate shrinks every "
+         "round (lr_decay), so the curves flatten out as training goes on."),
         ("vanet_loss_vs_rounds.png", _extrema_summary(_pop_loss),
-         "The per-vehicle loss is the private model's DML training loss, "
-         "(1-alpha) CE + alpha KL, averaged over the round's batches (v1 semantics). "
-         "It falls while the private models fit their local samples under a "
-         "decaying learning rate. Short rises are expected when DML transfers "
-         "changing predictions between private and proxy models."),
+         "This is the private model's DML training loss, (1-alpha) CE + alpha KL, "
+         "averaged over the round's batches, the same definition v1 uses. It drops "
+         "as the private models fit their local data and the learning rate shrinks. "
+         "Small bumps are normal: the proxy model's predictions keep changing, and "
+         "the private model is chasing them."),
         ("vanet_energy_training_vs_rounds.png", _extrema_summary(_v("energy_training_j"),
                                                                  "J"),
-         "Training energy is computed from measured training time, so its rises and "
-         "falls follow per-round CPU scheduling, batch execution time, and the "
-         "number of active local samples rather than model accuracy alone."),
+         "Training energy is derived from how long training actually took. It "
+         "moves with CPU scheduling, batch timing and how many local samples were "
+         "active, not with how accurate the model is."),
         ("vanet_energy_other_vs_rounds.png", _extrema_summary(_v("energy_total_j"), "J"),
-         "Non-training energy follows cryptographic and communication durations. It "
-         "increases when more peers are in range, more messages are verified, or a "
-         "round spends longer transmitting updates."),
+         "This is the energy spent on everything except training: cryptography and "
+         "radio time. It goes up when more peers are in range, more messages need "
+         "verifying, or uploads take longer to send."),
         ("vanet_energy_breakdown.png", _extrema_summary(_v("energy_total_j"), "J"),
-         "The component lines move differently because training, security, and "
-         "communication work are timed separately. The total follows whichever "
-         "measured component dominates that round."),
+         "Training, security and communication are timed separately, so their lines "
+         "move independently. The total tracks whichever part was largest that round."),
         ("vanet_end_to_end_time_vs_rounds.png", _extrema_summary(end_to_end, "ms"),
-         "End-to-end time includes training, cryptography, communication, and idle "
-         "synchronization. Peaks usually indicate stragglers, RSU/server collection "
-         "waits, or operating-system scheduling contention."),
+         "End-to-end time adds up training, cryptography, communication and time "
+         "spent waiting for others. Spikes usually mean a slow vehicle held the "
+         "round up, an RSU or the server was still collecting, or the OS was busy "
+         "with other work."),
         ("vanet_latency_breakdown.png", _extrema_summary(end_to_end, "ms"),
-         "This is the legacy alias of the end-to-end component graph. Its total rises "
-         "when training or synchronization wait rises and falls when all participants "
-         "complete the hierarchy promptly."),
+         "Same data as the end-to-end graph, kept under its older name for v1 "
+         "compatibility. Don't count it as a separate result."),
         ("vanet_end_to_end_security_comm_detail.png",
          f"Security: {_extrema_summary(security, 'ms')} Communication: "
          f"{_extrema_summary(communication, 'ms')}",
-         "Security varies with batch size and verification work; communication is "
-         "modeled wireless airtime and varies with message sizes and link distances."),
+         "A zoomed-in view of the two small components. Security time grows with "
+         "batch size and the amount of verification work. Communication is modeled "
+         "radio airtime, so it grows with message size and link distance."),
         ("vanet_action_to_response_latency.png", _extrema_summary(action_response, "ms"),
-         "This timer starts when a vehicle sends LOCAL_UPDATE and stops when its "
-         "upload airtime completes. It rises when that vehicle trains longer or waits "
-         "for a later simulated-time slot and falls when uploads finish quickly."),
+         "The clock starts when a vehicle sends LOCAL_UPDATE and stops when its "
+         "upload finishes transmitting. It gets longer when the vehicle trains for "
+         "longer or has to wait for a later simulated time slot."),
         ("vanet_cryptographic_operations.png",
          f"Generation: {_extrema_summary(sig_gen, 'ms')} Verification: "
          f"{_extrema_summary(sig_ver, 'ms')} Encryption: "
          f"{_extrema_summary(encryption, 'ms')}",
-         "The curves change with the number of signed messages, the number of items "
-         "in each batch, individual fallback verification, and runtime contention. "
-         "They are operation-time measurements, not convergence indicators."),
+         "These lines follow how many messages were signed, how big each "
+         "verification batch was, how often a batch had to fall back to checking "
+         "signatures one by one, and how busy the machine was. They measure "
+         "operation cost; they say nothing about whether training is converging."),
         ("vanet_security_overhead.png", _extrema_summary(sig_ver, "ms"),
-         "This legacy alias contains the same cryptographic series. Verification "
-         "increases with more received signatures or fallback work and decreases "
-         "when batches contain fewer items or execute faster."),
+         "Same cryptographic series as the previous graph, kept under its older "
+         "name for v1 compatibility. Verification cost rises with more incoming "
+         "signatures or fallback checks and falls with smaller batches."),
         ("vanet_throughput_vs_rounds.png", _extrema_summary(goodput_mbps, "Mbps"),
-         "Modeled VANET goodput is the sum of successfully delivered wireless "
-         "bits divided by their modeled PHY airtime. It reflects V2V, V2RSU, "
-         "and RSU-to-vehicle link capacities, excluding wired backhaul timing."),
+         "Goodput is every wireless bit that was successfully delivered, divided "
+         "by the modeled radio time it took. It covers vehicle-to-vehicle, "
+         "vehicle-to-RSU and RSU-to-vehicle links, and leaves out the wired "
+         "backhaul. A perfectly flat line at the link cap means every link was "
+         "short enough to run at full rate."),
         ("vanet_vehicles_in_range_vs_rounds.png", _extrema_summary(coverage_total,
                                                                    "vehicles"),
          coverage_reason),
     ]
     lines = ["# VANET plot explanations", "",
-             "These notes use the measured CSV values from this run. The listed causes "
-             "explain the implementation mechanisms that can produce the observed changes; "
-             "a graph alone does not prove which mechanism caused a particular point.",
+             "The numbers below come straight from this run's CSV files. The "
+             "explanations describe what in the simulator can make each line move; "
+             "a graph on its own can't prove which of those caused any single point.",
              ""]
     for filename, observation, reason in entries:
         lines.extend([f"## `{filename}`", "", f"![{filename}]({filename})", "",
-                      f"Observed range: {observation}", "",
-                      f"Why the line rises and falls: {reason}", ""])
+                      f"**Range in this run:** {observation}", "",
+                      f"**What moves it:** {reason}", ""])
     if routing_csv is not None and routing_csv.exists() and routing_csv.stat().st_size:
         frame = pd.read_csv(routing_csv).sort_values("round").reset_index(drop=True)
         routing_total = (frame["rreq_bytes_tx"] + frame["rrep_bytes_tx"]
@@ -630,33 +633,37 @@ def _write_explanations(df: pd.DataFrame, rsu_range_m: float, out_dir: Path,
         allm = frame["network_latency_mean_s"].dropna()
         aodv_entries = [
             ("vanet_aodv_routing_overhead_vs_rounds.png", _r(routing_total, "KiB"),
-             "AODV routing overhead rises when Route Request floods, Route Reply "
-             "returns, retries, or Route Error notifications require more hop-by-hop "
-             "transmissions. It falls when active routes are reused and remain valid."),
+             "This is the cost of finding routes. It goes up when vehicles have to "
+             "flood Route Requests, send back Route Replies, retry, or report broken "
+             "links with Route Errors. It goes down when existing routes are still "
+             "valid and can simply be reused."),
             ("vanet_communication_volume_vs_rounds.png", _r(wireless_total, "KiB"),
-             "Total wireless volume combines Federated Learning payloads, security "
-             "bytes, AODV control bodies, and Internet Protocol/User Datagram Protocol "
-             "headers. It changes with delivered updates, path length, and route "
-             "discovery or repair traffic."),
+             "Everything sent over the air: FL model payloads, security bytes, AODV "
+             "control messages and IP/UDP headers. A payload that crosses several hops "
+             "is counted once per hop. The total moves with how many updates got "
+             "through, how long the paths were, and how much route discovery or "
+             "repair was needed."),
             ("vanet_normalized_routing_load_vs_rounds.png",
              _r(frame["normalized_routing_load"]),
-             "Normalized Routing Load increases when more AODV control-packet "
-             "transmissions are needed per delivered data packet. It is undefined "
-             "when no data packet reaches its destination and remains a separate "
-             "metric rather than part of byte overhead."),
+             "Normalized Routing Load is the number of AODV control transmissions per "
+             "data packet delivered, so lower is more efficient. It can't be computed "
+             "in a round where no data packet arrives. It's a ratio, not a byte count, "
+             "so it doesn't overlap with the routing-overhead graph."),
             ("vanet_aodv_network_latency_vs_rounds.png",
              "Successful deliveries: " + _r(
                  frame["successful_network_latency_mean_s"], "s") + " All attempts: "
              + _r(frame["network_latency_mean_s"], "s"),
-             "Modeled AODV latency rises with longer multi-hop paths, route discovery, "
-             "retries, and broken-link recovery. It falls when a short active route is "
-             "available and packets can be forwarded immediately."),
+             "Modeled delivery time over the AODV network. It grows with longer "
+             "multi-hop paths, route discovery, retries and recovering from broken "
+             "links, and shrinks when a short route is already in place. If the two "
+             "lines sit on top of each other, every attempt was delivered. This is "
+             "simulated network time, not FL wall-clock time."),
         ]
         lines.extend(["", AODV_REPORT_MARKER, ""])
         for filename, observation, reason in aodv_entries:
             lines.extend([f"## `{filename}`", "", f"![{filename}]({filename})", "",
-                          f"Observed range: {observation}", "",
-                          f"Why the line rises and falls: {reason}", ""])
+                          f"**Range in this run:** {observation}", "",
+                          f"**What moves it:** {reason}", ""])
     path = out_dir / "vanet_plot_explanations.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
